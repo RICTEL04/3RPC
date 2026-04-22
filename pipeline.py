@@ -22,7 +22,7 @@ def run_pipeline():
 
         # 3. EXPORT — Guardar a CSVs incrementales
         # Filtrar columnas específicas
-        df_llm = df_llm.drop(columns=['sourceip'], errors='ignore')
+        df_llm = df_llm.drop(columns=['sourceip', 'http_status_code'], errors='ignore')
         llm_columns = [col for col in df_system.columns if 'llm' in col.lower()]
         df_system = df_system.drop(columns=llm_columns, errors='ignore')
 

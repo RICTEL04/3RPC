@@ -21,5 +21,5 @@ HANA_USER   = os.getenv("HANA_USER",   "DBADMIN")
 HANA_PASS   = os.getenv("HANA_PASS",   "D0nSAPHanaCloudCentral2004")
 HANA_SCHEMA = os.getenv("HANA_SCHEMA", "DBADMIN")
 
-# Límite de páginas para pruebas (1 = solo primera página)
-MAX_PAGES = int(os.getenv("MAX_PAGES", 1))
+# Límite de páginas (0 = sin límite, descarga todas)
+MAX_PAGES = int(os.getenv("MAX_PAGES", 0))

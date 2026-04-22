@@ -68,8 +68,7 @@ def fetch_all_logs() -> tuple[list[dict], dict]:
     total_pages = info["total_pages"]
     total_records = info["total_records"]
 
-    # Limitar páginas para pruebas
-    pages_to_fetch = min(total_pages, MAX_PAGES)
+    pages_to_fetch = total_pages if MAX_PAGES == 0 else min(total_pages, MAX_PAGES)
 
     logger.info(f"Ventana: {info['window_start']} → {info['window_end']}")
     logger.info(f"Configuración - Total registros: {total_records} | Total páginas: {total_pages} | Páginas a descargar: {pages_to_fetch}")
