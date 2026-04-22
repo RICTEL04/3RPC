@@ -4,6 +4,7 @@ import os
 import pandas as pd
 from ingestion import fetch_all_logs
 from preprocessing import build_dataframe, split_by_type, flag_security_events
+from hana_client import get_connection, create_tables_if_not_exist, load_system_logs, load_llm_logs
 
 
 def run_pipeline():
@@ -21,7 +22,7 @@ def run_pipeline():
 
         # 3. EXPORT — Guardar a CSVs incrementales
         # Filtrar columnas específicas
-        df_llm = df_llm.drop(columns=['sourceip'], errors='ignore')
+        df_llm = df_llm.drop(columns=['sourceip', 'http_status_code'], errors='ignore')
         llm_columns = [col for col in df_system.columns if 'llm' in col.lower()]
         df_system = df_system.drop(columns=llm_columns, errors='ignore')
 
@@ -47,8 +48,18 @@ def run_pipeline():
         append_to_csv(csv_llm_file, df_llm)
         append_to_csv(csv_system_file, df_system)
 
+        print(f"[PIPELINE] CSVs actualizados: {len(df)} registros ({len(df_llm)} LLM, {len(df_system)} sistema)")
+
+        # 4. LOAD — Enviar a HANA Cloud (UPSERT evita duplicados por _id)
+        conn = get_connection()
+        try:
+            create_tables_if_not_exist(conn)
+            load_system_logs(conn, df_system)
+            load_llm_logs(conn, df_llm)
+        finally:
+            conn.close()
+
         print(f"[PIPELINE] Ciclo completado para ventana: {window_info['window_start']}")
-        print(f"CSVs actualizados: {len(df)} registros procesados ({len(df_llm)} LLM, {len(df_system)} sistema)")
 
     except Exception as e:
         print(f"[PIPELINE] ERROR en el ciclo: {e}")
@@ -58,10 +69,10 @@ if __name__ == "__main__":
     # Ejecutar inmediatamente al inicio
     run_pipeline()
 
-    # Luego polling cada 1 minuto
-    schedule.every(1).minutes.do(run_pipeline)
+    # Luego polling cada 10 minuto
+    schedule.every(10).minutes.do(run_pipeline)
 
-    print("[PIPELINE] Scheduler activo — ejecutando cada minuto...")
+    print("[PIPELINE] Scheduler activo — ejecutando cada 10 minutos...")
     while True:
         schedule.run_pending()
         time.sleep(60)

@@ -15,8 +15,11 @@ HEADERS = {
 }
 
 # HANA Configuration
-HANA_HOST = os.getenv("HANA_HOST", "")
-HANA_PORT = int(os.getenv("HANA_PORT", 443))
-HANA_USER = os.getenv("HANA_USER", "")
-HANA_PASS = os.getenv("HANA_PASS", "")
-HANA_SCHEMA = os.getenv("HANA_SCHEMA", "SOC_LOGS")
+HANA_HOST   = os.getenv("HANA_HOST",   "47a6a8bd-d117-4948-a487-39c34f3d2889.hna1.prod-us10.hanacloud.ondemand.com")
+HANA_PORT   = int(os.getenv("HANA_PORT", 443))
+HANA_USER   = os.getenv("HANA_USER",   "DBADMIN")
+HANA_PASS   = os.getenv("HANA_PASS",   "D0nSAPHanaCloudCentral2004")
+HANA_SCHEMA = os.getenv("HANA_SCHEMA", "DBADMIN")
+
+# Límite de páginas (0 = sin límite, descarga todas)
+MAX_PAGES = int(os.getenv("MAX_PAGES", 0))
