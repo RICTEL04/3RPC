@@ -1,6 +1,6 @@
 import requests
 import logging
-from config import API_BASE_URL, HEADERS, API_TOKEN
+from config import API_BASE_URL, HEADERS, API_TOKEN, MAX_PAGES
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Configurar logging
@@ -68,17 +68,19 @@ def fetch_all_logs() -> tuple[list[dict], dict]:
     total_pages = info["total_pages"]
     total_records = info["total_records"]
 
+    # Limitar páginas para pruebas
+    pages_to_fetch = min(total_pages, MAX_PAGES)
+
     logger.info(f"Ventana: {info['window_start']} → {info['window_end']}")
-    logger.info(f"Configuración - Total registros: {total_records} | Total páginas: {total_pages}")
+    logger.info(f"Configuración - Total registros: {total_records} | Total páginas: {total_pages} | Páginas a descargar: {pages_to_fetch}")
     logger.info("-"*70)
 
-    # Paso 2: Descargar todas las páginas en paralelo
-    logger.info(f"Descargando {total_pages} páginas en paralelo...")
+    # Paso 2: Descargar páginas en paralelo
+    logger.info(f"Descargando {pages_to_fetch} páginas en paralelo...")
     all_records = []
-    
-    # Usar ThreadPoolExecutor para descargar en paralelo (máx 5 conexiones simultáneas)
+
     with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(fetch_page, page): page for page in range(1, total_pages + 1)}
+        futures = {executor.submit(fetch_page, page): page for page in range(1, pages_to_fetch + 1)}
         
         completed = 0
         for future in as_completed(futures):
@@ -86,10 +88,10 @@ def fetch_all_logs() -> tuple[list[dict], dict]:
             all_records.extend(records)
             completed += 1
             total_acumulado = len(all_records)
-            logger.info(f"Progreso: {completed}/{total_pages} páginas | Total acumulado: {total_acumulado} registros")
+            logger.info(f"Progreso: {completed}/{pages_to_fetch} páginas | Total acumulado: {total_acumulado} registros")
 
     logger.info("-"*70)
-    logger.info(f"DESCARGA COMPLETADA: {len(all_records)} registros totales desde {total_pages} páginas")
+    logger.info(f"DESCARGA COMPLETADA: {len(all_records)} registros totales desde {pages_to_fetch} páginas")
     logger.info("="*70)
     
     return all_records, info
