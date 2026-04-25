@@ -1,10 +1,42 @@
-import schedule
 import time
 import os
+
 import pandas as pd
-from ingestion import fetch_all_logs
+from ingestion import fetch_all_logs, get_window_info
 from preprocessing import build_dataframe, split_by_type, flag_security_events
 from hana_client import get_connection, create_tables_if_not_exist, load_system_logs, load_llm_logs
+
+# Backoff en segundos entre reintentos cuando la API aún no se actualizó.
+# Progresión: 5 → 10 → 30 → 60 → 60 → 60 ...
+POLL_BACKOFF = [5, 10, 30, 60]
+
+
+def _wait_for_new_window(last_window_start: str) -> dict:
+    """
+    Consulta /info con backoff hasta detectar que window_start cambió.
+    Retorna el nuevo info dict cuando hay ventana nueva.
+    """
+    delays = iter(POLL_BACKOFF)
+    next_delay = POLL_BACKOFF[-1]   # valor tope para reintentos posteriores
+
+    while True:
+        try:
+            info = get_window_info()
+            if info["window_start"] != last_window_start:
+                print(f"[PIPELINE] Nueva ventana detectada: "
+                      f"{last_window_start} → {info['window_start']}")
+                return info
+            else:
+                try:
+                    next_delay = next(delays)
+                except StopIteration:
+                    pass   # mantiene el último valor (60 s)
+                print(f"[PIPELINE] API sin cambios (ventana: {info['window_start']}) "
+                      f"— reintento en {next_delay} s")
+                time.sleep(next_delay)
+        except Exception as e:
+            print(f"[PIPELINE] Error consultando /info: {e} — reintento en 30 s")
+            time.sleep(30)
 
 
 def run_pipeline():
@@ -66,13 +98,18 @@ def run_pipeline():
 
 
 if __name__ == "__main__":
-    # Ejecutar inmediatamente al inicio
-    run_pipeline()
+    # Obtener ventana inicial para tener referencia de comparación
+    try:
+        current_info = get_window_info()
+        last_window  = current_info["window_start"]
+        print(f"[PIPELINE] Ventana inicial: {last_window} — descargando datos...")
+        run_pipeline()
+    except Exception as e:
+        print(f"[PIPELINE] Error en arranque: {e}")
+        last_window = None
 
-    # Luego polling cada 10 minuto
-    schedule.every(10).minutes.do(run_pipeline)
-
-    print("[PIPELINE] Scheduler activo — ejecutando cada 10 minutos...")
+    # Ciclos siguientes: esperar cambio real en la API antes de ingestar
     while True:
-        schedule.run_pending()
-        time.sleep(60)
+        new_info    = _wait_for_new_window(last_window)
+        last_window = new_info["window_start"]
+        run_pipeline()
