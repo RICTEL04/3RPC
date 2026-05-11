@@ -1,12 +1,8 @@
-# Archivos solo para desarrollo local — no subir a Cloud Foundry
+# Dashboard y watchdog corren fuera de CF (servidor físico)
+src/dashboard/
+src/monitoring/watchdog.py
 
-# Dashboard y watchdog corren fuera de CF
-dashboard.py
-hana_watchdog.py
-
-# Pipelines antiguos (reemplazados por main_pipeline.py)
-pipeline.py
-ml_pipeline.py
+# Scripts de utilidad — solo desarrollo local
 export_csv.py
 verify_anomalies.py
 
@@ -21,6 +17,7 @@ exports/
 
 # Variables de entorno locales — CF usa las del manifest.yml
 .env
+.env.example
 
 # Cache de Python
 __pycache__/
@@ -28,11 +25,10 @@ __pycache__/
 *.pyo
 .pytest_cache/
 
-# Git
+# Git y editor
 .git/
 .gitignore
-
-# Editor
+.claude/
 .vscode/
 .idea/
 *.swp
