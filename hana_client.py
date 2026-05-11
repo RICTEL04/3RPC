@@ -113,7 +113,8 @@ def get_connection():
         user=HANA_USER,
         password=HANA_PASS,
         encrypt=True,
-        sslValidateCertificate=False
+        sslValidateCertificate=False,
+        sslCryptoProvider='openssl',
     )
 
 

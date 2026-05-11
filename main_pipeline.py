@@ -33,6 +33,7 @@ from ml.features import build_features, BUCKET, TRAINING_HOURS
 from ml.detector import AnomalyDetector
 from ml.streaming_detector import StreamingDetector
 from ml.versioning import save_model, load_latest_model
+from ml.alert_sender import send_alerts_batch
 from heartbeat import HeartbeatThread
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -50,7 +51,7 @@ POLL_BACKOFF = [5, 10, 30, 60]   # segundos entre reintentos de /info
 # ── Configuración ML ──────────────────────────────────────────────────────────
 SCORE_HOURS        = TRAINING_HOURS   # evaluar la misma ventana de entrenamiento
 RETRAIN_EVERY      = 2                # re-entrenar IForest cada N ciclos completados
-MIN_TRAINING_HOURS = 24               # horas mínimas de datos en HANA para activar ML
+MIN_TRAINING_HOURS = int(os.getenv("MIN_TRAINING_HOURS", 24))
 
 # ── Estado global de sesión ───────────────────────────────────────────────────
 HST_STATE_FILE = os.path.join("models", "hst_state.pkl")
@@ -155,6 +156,7 @@ def _get_conn():
         address=HANA_HOST, port=HANA_PORT,
         user=HANA_USER, password=HANA_PASS,
         encrypt=True, sslValidateCertificate=False,
+        sslCryptoProvider='openssl',
     )
 
 
@@ -836,6 +838,21 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
 
         _save_anomalies(conn, anomalies_df, features_score, df_sys_fresh, df_llm_fresh)
 
+        # Enviar alertas a la API SAP — aislado para no interrumpir el modelo
+        try:
+            for col_feat, col_out in [
+                ("n_sys_requests", "n_requests"),
+                ("error_rate",     "error_rate"),
+                ("n_unique_ips",   "n_unique_ips"),
+            ]:
+                if col_feat in features_score.columns:
+                    anomalies_df[col_out] = (
+                        anomalies_df["bucket"].map(features_score[col_feat]).fillna(0)
+                    )
+            send_alerts_batch(anomalies_df)
+        except Exception as alert_exc:
+            logger.error(f"Error enviando alertas a la API (el modelo sigue OK): {alert_exc}")
+
     # Persistir HST y estado ML siempre que se haga scoring (con o sin anomalías)
     _save_hst(_streaming)
     _last_scored_until = str(features_score.index.max())
@@ -890,7 +907,7 @@ if __name__ == "__main__":
             conn = _get_conn_with_retry()
 
             create_tables_if_not_exist(conn)
-            startup_recovery(conn)
+            #startup_recovery(conn)
 
             # Ventana inicial solo en el primer arranque
             empty_cycles = 0   # ciclos consecutivos sin datos nuevos

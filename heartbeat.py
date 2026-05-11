@@ -60,6 +60,7 @@ def _send_pulse(cycle: int, last_window: str, status: str, start_time: float):
             address=HANA_HOST, port=HANA_PORT,
             user=HANA_USER, password=HANA_PASS,
             encrypt=True, sslValidateCertificate=False,
+            sslCryptoProvider='openssl',
         )
         _ensure_table(conn)
         uptime_min = (time.time() - start_time) / 60
