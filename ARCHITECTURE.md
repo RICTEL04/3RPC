@@ -35,7 +35,6 @@
 | Clasificación de amenazas | 10 categorías: DDoS, Brute Force, LLM Prompt Injection, 5xx Overload, etc. |
 | Alertas | POST a `/alert` en la API con mensaje estructurado ≤300 caracteres |
 | Watchdog externo | Monitoreo de heartbeat con reinicio automático via CF CLI y Service Manager |
-| Dashboard | Visualización interactiva con Streamlit + Plotly (corre localmente) |
 
 ---
 
@@ -71,12 +70,9 @@
 │   │   └── alert_sender.py    # Envío de alertas a la API
 │   │
 │   ├── monitoring/
-│   │   ├── heartbeat.py       # Hilo daemon: pulso a HANA cada 60 s
-│   │   └── watchdog.py        # Proceso externo: monitoreo y recovery automático
-│   │
-│   └── dashboard/
-│       └── app.py             # Dashboard Streamlit (solo desarrollo local)
-│
+│       ├── heartbeat.py       # Hilo daemon: pulso a HANA cada 60 s
+│       └── watchdog.py        # Proceso externo: monitoreo y recovery automático
+│   
 ├── exports/                   # CSVs locales (buffer; gitignored)
 └── models/                    # Modelos serializados + estado HST (gitignored)
 ```
@@ -443,5 +439,3 @@ Todas las variables se leen en `config.py` via `python-dotenv`. En desarrollo se
 | `joblib` | 1.4.2 | Serialización de modelos sklearn |
 
 ---
-
-*Generado automáticamente a partir del código fuente del proyecto.*
