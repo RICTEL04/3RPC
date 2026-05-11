@@ -5,12 +5,12 @@ from datetime import datetime
 import joblib
 
 MODEL_DIR     = "models"
-KEEP_VERSIONS = 3   # cuántas versiones recientes conservar; las más antiguas se eliminan
+KEEP_VERSIONS = 3
 
 
 def _cleanup_old_models() -> None:
     """Borra versiones obsoletas dejando solo las KEEP_VERSIONS más recientes."""
-    versions = list_versions()          # ordenadas cronológicamente (asc)
+    versions = list_versions()
     to_delete = versions[:-KEEP_VERSIONS] if len(versions) > KEEP_VERSIONS else []
     for meta in to_delete:
         for path in (meta.get("model_path", ""),

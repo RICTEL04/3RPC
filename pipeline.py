@@ -2,9 +2,9 @@ import time
 import os
 
 import pandas as pd
-from ingestion import fetch_all_logs, get_window_info
-from preprocessing import build_dataframe, split_by_type, flag_security_events
-from hana_client import get_connection, create_tables_if_not_exist, load_system_logs, load_llm_logs
+from src.ingestion.api_client import fetch_all_logs, get_window_info
+from src.processing.preprocessing import build_dataframe, split_by_type, flag_security_events
+from src.ingestion.hana_client import get_connection, create_tables_if_not_exist, load_system_logs, load_llm_logs
 
 # Backoff en segundos entre reintentos cuando la API aún no se actualizó.
 # Progresión: 5 → 10 → 30 → 60 → 60 → 60 ...

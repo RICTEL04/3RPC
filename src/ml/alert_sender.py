@@ -1,6 +1,6 @@
 """
-ml/alert_sender.py
-──────────────────
+src/ml/alert_sender.py
+──────────────────────
 Sends detected anomaly alerts to the SAP API endpoint POST /alert.
 
 Required message format (max 300 characters):
@@ -17,7 +17,6 @@ logger = logging.getLogger("ML_PIPELINE.alert")
 _ALERT_URL = f"{API_BASE_URL}/alert"
 _MAX_MSG   = 300
 
-# ── Attack category translations (ES → EN) ────────────────────────────────────
 _CATEGORY_EN = {
     "DDoS / Flooding de Trafico":       "DDoS / Traffic Flooding",
     "Fuerza Bruta":                     "Brute Force",
@@ -31,7 +30,6 @@ _CATEGORY_EN = {
     "Patron Estadistico Inusual":       "Unusual Statistical Pattern",
 }
 
-# ── Feature label translations (ES → EN) ─────────────────────────────────────
 _LABEL_EN = {
     "Volumen de requests sistema":              "System request volume",
     "IPs únicas":                               "Unique IPs",
@@ -73,17 +71,11 @@ def _translate_label(label: str) -> str:
 
 
 def _build_message(anomaly: dict) -> str:
-    """
-    Builds the alert message in English, capped at 300 characters.
-    anomaly must contain: anomaly_type, attack_category, severity,
-    bucket_start, top_deviations, n_requests, error_rate, top_ip.
-    """
     a_type   = anomaly.get("anomaly_type", "UNKNOWN")
     category = _translate_category(anomaly.get("attack_category", "Unusual Pattern"))
     severity = anomaly.get("severity", "?")
     bucket   = anomaly.get("bucket_start", "")
 
-    # ISO-8601 UTC timestamp
     try:
         ts = str(bucket).replace(" ", "T")
         if len(ts) == 19:
@@ -91,7 +83,6 @@ def _build_message(anomaly: dict) -> str:
     except Exception:
         ts = str(bucket)
 
-    # Top deviated feature
     top_devs = anomaly.get("top_deviations") or []
     if top_devs:
         top   = top_devs[0]
@@ -113,7 +104,6 @@ def _build_message(anomaly: dict) -> str:
 
     msg = what + when + why
     if len(msg) > _MAX_MSG:
-        # Trim WHY to fit, keeping WHAT and WHEN intact
         budget    = _MAX_MSG - len(what) - len(when) - 1
         why_short = f" WHY: {why_detail}."
         if len(why_short) > budget:
@@ -124,11 +114,6 @@ def _build_message(anomaly: dict) -> str:
 
 
 def send_alert(anomaly: dict) -> bool:
-    """
-    Sends an alert to POST /alert.
-    Returns True if the API responded 2xx, False otherwise.
-    Logs the message sent and the result.
-    """
     message = _build_message(anomaly)
 
     logger.info(
@@ -174,9 +159,8 @@ def send_alert(anomaly: dict) -> bool:
 
 def send_alerts_batch(anomalies_df) -> dict:
     """
-    Sends alerts for all anomalies in a DataFrame.
-    Only sends HIGH and MEDIUM; skips LOW to avoid flooding the API.
-    Returns a summary: {"sent": n, "failed": n, "skipped": n}.
+    Envía alertas para todas las anomalías en un DataFrame.
+    Solo envía HIGH y MEDIUM; omite LOW para no saturar la API.
     """
     sent = failed = skipped = 0
 
@@ -184,9 +168,7 @@ def send_alerts_batch(anomalies_df) -> dict:
         severity = row.get("severity", "LOW")
         if severity == "LOW":
             skipped += 1
-            logger.debug(
-                "[ALERT] Skipping LOW anomaly | bucket=%s", row.get("bucket")
-            )
+            logger.debug("[ALERT] Skipping LOW anomaly | bucket=%s", row.get("bucket"))
             continue
 
         anomaly = {

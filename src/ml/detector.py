@@ -33,12 +33,10 @@ FEATURE_COLS = [
     "llm_to_sys_ratio", "total_requests",
 ]
 
-# Umbrales para clasificar tipo de anomalía
-SPIKE_SIGMA      = 2.5  # desviaciones sobre la media → SPIKE
-MULTI_BUCKET_N   = 3    # buckets consecutivos mínimos → MULTI_BUCKET
-MULTI_BUCKET_GAP = 10   # gap máximo en minutos entre buckets consecutivos
+SPIKE_SIGMA      = 2.5
+MULTI_BUCKET_N   = 3
+MULTI_BUCKET_GAP = 10
 
-# Nombres amigables para las features (para logs y dashboard)
 FEATURE_LABELS = {
     "n_sys_requests":       "Volumen de requests sistema",
     "n_unique_ips":         "IPs únicas",
@@ -71,9 +69,7 @@ FEATURE_LABELS = {
 }
 
 
-# ── Categorías de ataque ──────────────────────────────────────────────────────
 ATTACK_RULES: list[tuple[str, dict]] = [
-    # (category_name, {feature: weight})  — weighted sum of z-scores decides winner
     ("DDoS / Flooding de Trafico",       {"rate_limit_rate": 4, "n_sys_requests": 2,
                                           "top_ip_share": 1, "total_requests": 1}),
     ("Fuerza Bruta",                     {"client_error_rate": 3, "n_unique_ips": 2,
@@ -93,14 +89,10 @@ ATTACK_RULES: list[tuple[str, dict]] = [
     ("Costo LLM Anomalo",                {"total_llm_cost": 4, "max_llm_cost": 3,
                                           "avg_llm_cost": 2, "avg_tokens": 1}),
 ]
-ATTACK_MIN_SCORE = 1.0   # if best score < this, return generic label
+ATTACK_MIN_SCORE = 1.0
 
 
 def classify_attack_type(top_devs: list[dict]) -> str:
-    """
-    Dado el listado de top deviaciones (feature, z_score), retorna la
-    categoria de ataque mas probable segun reglas ponderadas por z-score.
-    """
     feat_z = {d["feature"]: d["z_score"] for d in top_devs}
 
     best_name  = "Patron Estadistico Inusual"
@@ -141,7 +133,6 @@ class AnomalyDetector:
         self.is_fitted   = True
         self._used_cols  = used_cols
 
-        # Guardar estadísticas para explicabilidad (z-scores)
         for col in used_cols:
             vals = features_df[col].fillna(0)
             self._feature_means[col] = float(vals.mean())
@@ -156,24 +147,18 @@ class AnomalyDetector:
         return self
 
     def score(self, features_df: pd.DataFrame) -> pd.Series:
-        """-1.0 = muy anómalo, 0.0 = neutral, positivo = muy normal."""
         X, _ = self._prepare(features_df)
         X_scaled = self.scaler.transform(X)
         return pd.Series(self.model.score_samples(X_scaled),
                          index=features_df.index, name="anomaly_score")
 
     def predict(self, features_df: pd.DataFrame) -> pd.Series:
-        """-1 = anomalía, 1 = normal."""
         X, _ = self._prepare(features_df)
         X_scaled = self.scaler.transform(X)
         return pd.Series(self.model.predict(X_scaled),
                          index=features_df.index, name="prediction")
 
     def explain(self, bucket_row: pd.Series, top_n: int = 5) -> list[dict]:
-        """
-        Para un bucket anómalo, retorna las top_n features que más se
-        desvían del baseline de entrenamiento (por z-score).
-        """
         deviations = []
         for col, mean in self._feature_means.items():
             if col not in bucket_row.index:
@@ -200,7 +185,6 @@ class AnomalyDetector:
 
         anomaly_idx = sorted(features_df.index[preds == -1].tolist())
 
-        # Detectar runs de buckets consecutivos
         multi_bucket_set: set = set()
         if len(anomaly_idx) >= 2:
             run = [anomaly_idx[0]]
@@ -230,7 +214,6 @@ class AnomalyDetector:
 
             severity = "HIGH" if score < -0.3 else ("MEDIUM" if score < -0.15 else "LOW")
 
-            # Explicación de las top 5 features más desviadas
             top_devs = self.explain(row, top_n=5)
 
             results.append({
@@ -248,7 +231,6 @@ class AnomalyDetector:
 
 def _build_reason(a_type: str, row: pd.Series,
                   top_devs: list[dict], spike_threshold: float) -> str:
-    """Genera una frase legible explicando por qué se detectó la anomalía."""
     if not top_devs:
         return "Patrón estadístico inusual sin feature dominante."
 
@@ -263,7 +245,6 @@ def _build_reason(a_type: str, row: pd.Series,
         return (f"Patrón sostenido en múltiples ventanas. "
                 f"Feature dominante: {top['label']} = {top['value']} "
                 f"(z={top['z_score']}, baseline={top['baseline']}).")
-    # CATEGORIZATION
     return (f"Combinación inusual de patrones. "
             f"Top feature: {top['label']} = {top['value']} "
             f"({top['direction']}, z={top['z_score']}, "

@@ -3,7 +3,6 @@ import logging
 from config import API_BASE_URL, HEADERS, API_TOKEN, MAX_PAGES
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Configurar logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(name)s] - %(levelname)s - %(message)s'
@@ -17,14 +16,14 @@ def get_window_info() -> dict:
     """
     logger.info(f"Conectando a API: {API_BASE_URL}/info")
     logger.debug(f"Token: {API_TOKEN[:20]}..." if API_TOKEN else "Token no configurado")
-    
+
     r = requests.get(f"{API_BASE_URL}/info", headers=HEADERS, timeout=15)
     r.raise_for_status()
-    
+
     info = r.json()
     logger.info(f"Información obtenida - Total páginas: {info['total_pages']}, Total registros: {info['total_records']}")
     logger.info(f"Ventana temporal: {info['window_start']} → {info['window_end']}")
-    
+
     return info
 
 
@@ -32,9 +31,9 @@ def fetch_page(page: int) -> tuple[int, list]:
     """Retorna los registros de una página específica."""
     url = f"{API_BASE_URL}/logs/current"
     params = {"page": page}
-    
+
     logger.debug(f"Solicitando página {page}: GET {url} params={params}")
-    
+
     r = requests.get(
         url,
         headers=HEADERS,
@@ -42,10 +41,10 @@ def fetch_page(page: int) -> tuple[int, list]:
         timeout=15
     )
     r.raise_for_status()
-    
+
     data = r.json()["data"]
     logger.info(f"Página {page} - Registros obtenidos: {len(data)}")
-    
+
     return page, data
 
 
@@ -57,14 +56,13 @@ def fetch_all_logs() -> tuple[list[dict], dict]:
     logger.info("="*70)
     logger.info("INICIANDO INGESTA DE LOGS")
     logger.info("="*70)
-    
-    # Paso 1: descubrir cuántas páginas hay
+
     try:
         info = get_window_info()
     except requests.exceptions.RequestException as e:
         logger.error(f"Error al obtener información de ventana: {e}")
         raise
-    
+
     total_pages = info["total_pages"]
     total_records = info["total_records"]
 
@@ -74,13 +72,12 @@ def fetch_all_logs() -> tuple[list[dict], dict]:
     logger.info(f"Configuración - Total registros: {total_records} | Total páginas: {total_pages} | Páginas a descargar: {pages_to_fetch}")
     logger.info("-"*70)
 
-    # Paso 2: Descargar páginas en paralelo
     logger.info(f"Descargando {pages_to_fetch} páginas en paralelo...")
     all_records = []
 
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(fetch_page, page): page for page in range(1, pages_to_fetch + 1)}
-        
+
         completed = 0
         for future in as_completed(futures):
             page, records = future.result()
@@ -92,5 +89,5 @@ def fetch_all_logs() -> tuple[list[dict], dict]:
     logger.info("-"*70)
     logger.info(f"DESCARGA COMPLETADA: {len(all_records)} registros totales desde {pages_to_fetch} páginas")
     logger.info("="*70)
-    
+
     return all_records, info

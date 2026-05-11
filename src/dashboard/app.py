@@ -65,7 +65,6 @@ def load_anomalies(hours: int) -> pd.DataFrame:
             ORDER BY "bucket_start" ASC
         """)
     except Exception:
-        # attack_category column may not exist yet on older schema
         df = load_table(f"""
             SELECT "anomaly_id","detected_at","bucket_start","anomaly_type",
                    "severity","anomaly_score","n_requests","n_unique_ips",
@@ -155,7 +154,7 @@ if view == "Anomalias ML":
 
     if df_anom.empty:
         st.info("No hay anomalias detectadas en el periodo seleccionado. "
-                "Ejecuta `ml_pipeline.py` para generar detecciones.")
+                "Ejecuta `main.py` para generar detecciones.")
         st.stop()
 
     # ── KPIs ──────────────────────────────────────────────────────────────────
@@ -181,14 +180,12 @@ if view == "Anomalias ML":
         value="10min", key="gran_anom",
     )
 
-    # Volumen de fondo (sys + llm)
     ts_sys = df_sys[["timestamp"]].copy(); ts_sys["src"] = "Sistema"
     ts_llm = df_llm[["timestamp"]].copy(); ts_llm["src"] = "LLM"
     ts_all = pd.concat([ts_sys, ts_llm], ignore_index=True)
     ts_all["bucket"] = ts_all["timestamp"].dt.floor(gran_anom)
     vol_bg = ts_all.groupby("bucket").size().reset_index(name="count")
 
-    # Colores y símbolos por tipo de anomalia
     TYPE_STYLE = {
         "SPIKE":        {"color": "#EF553B", "symbol": "circle",       "size": 14},
         "MULTI_BUCKET": {"color": "#636EFA", "symbol": "diamond",      "size": 14},
@@ -198,7 +195,6 @@ if view == "Anomalias ML":
 
     fig = go.Figure()
 
-    # Área de volumen total al fondo
     fig.add_trace(go.Scatter(
         x=vol_bg["bucket"], y=vol_bg["count"],
         fill="tozeroy", mode="lines",
@@ -207,12 +203,11 @@ if view == "Anomalias ML":
         name="Volumen total", hovertemplate="%{x}<br>Logs: %{y}<extra></extra>",
     ))
 
-    # Sombra "Model Context Window" (ultimas TRAINING_HOURS horas)
     if not ts_all.empty and "bucket" in ts_all.columns:
         from datetime import timedelta as _td
         ctx_end   = ts_all["bucket"].max()
         try:
-            from ml.features import TRAINING_HOURS as _TH
+            from src.ml.features import TRAINING_HOURS as _TH
         except Exception:
             _TH = 24
         ctx_start = ctx_end - _td(hours=_TH)
@@ -226,12 +221,10 @@ if view == "Anomalias ML":
             hoverinfo="skip",
         ))
 
-    # Marcadores de anomalias — un trace por tipo para la leyenda
     for a_type, style in TYPE_STYLE.items():
         subset = df_anom[df_anom["anomaly_type"] == a_type]
         if subset.empty:
             continue
-        # altura del marcador = n_requests del bucket (si existe, sino max volumen)
         y_vals = []
         for _, r in subset.iterrows():
             bucket_time = r["bucket_start"]
@@ -358,7 +351,6 @@ if view == "Anomalias ML":
                 f"IP top: `{row.get('top_ip') or 'N/A'}`"
             )
 
-            # Top deviaciones desde details_json
             try:
                 details   = json.loads(row.get("details_json") or "{}")
                 top_devs  = details.get("top_deviations", [])
@@ -380,7 +372,6 @@ if view == "Anomalias ML":
                 )
                 st.dataframe(dev_df, use_container_width=True, hide_index=True)
 
-                # Mini bar chart de z-scores
                 z_data = pd.DataFrame([
                     {"feature": d["label"][:35], "z": abs(d["z_score"]),
                      "dir": d["direction"]}
@@ -402,7 +393,6 @@ if view == "Anomalias ML":
                 )
                 st.plotly_chart(fig_z, use_container_width=True)
 
-            # Tabla de logs relacionados (cluster view para CATEGORIZATION)
             if row["anomaly_type"] == "CATEGORIZATION":
                 st.markdown("**Vista de cluster — logs en esta ventana:**")
                 sys_ids = details.get("sys_log_ids", [])
@@ -444,7 +434,6 @@ elif view == "Resumen General":
 
     st.divider()
 
-    # ── Volumen total de logs a lo largo del tiempo ────────────────────────────
     st.subheader("📈 Volumen de logs a lo largo del tiempo")
     if not df_sys.empty or not df_llm.empty:
         granularity = st.select_slider(
@@ -461,7 +450,6 @@ elif view == "Resumen General":
         vol_total = ts_all.groupby("bucket").size().reset_index(name="count")
 
         fig = go.Figure()
-        # Área total al fondo
         fig.add_trace(go.Scatter(
             x=vol_total["bucket"], y=vol_total["count"],
             fill="tozeroy", mode="lines",
@@ -469,7 +457,6 @@ elif view == "Resumen General":
             fillcolor="rgba(31,119,180,0.15)",
             name="Total",
         ))
-        # Línea por fuente encima
         colors = {"Sistema": "#EF553B", "LLM": "#00CC96"}
         for fuente, grp in vol.groupby("fuente"):
             fig.add_trace(go.Scatter(
@@ -541,7 +528,6 @@ elif view == "System Logs":
     st.sidebar.divider()
     df = sidebar_filters(df_sys, "sys")
 
-    # KPIs
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total registros", f"{len(df):,}")
     c2.metric("IPs únicas", df["sourceip"].nunique() if "sourceip" in df.columns else "—")
@@ -553,7 +539,6 @@ elif view == "System Logs":
 
     st.divider()
 
-    # ── Volumen total ──────────────────────────────────────────────────────────
     st.subheader("📈 Volumen de logs a lo largo del tiempo")
     if not df.empty and "timestamp" in df.columns:
         gran_sys = st.select_slider(
@@ -647,7 +632,6 @@ elif view == "LLM Logs":
     st.sidebar.divider()
     df = sidebar_filters(df_llm, "llm")
 
-    # KPIs
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total peticiones", f"{len(df):,}")
     avg_time = df["llm_response_time_ms"].mean() if "llm_response_time_ms" in df.columns else None
@@ -681,7 +665,6 @@ elif view == "LLM Logs":
                          color_discrete_sequence=px.colors.qualitative.Bold)
             st.plotly_chart(fig, use_container_width=True)
 
-    # ── Volumen total LLM ──────────────────────────────────────────────────────
     st.subheader("📈 Volumen de peticiones LLM a lo largo del tiempo")
     if not df.empty and "timestamp" in df.columns:
         gran_llm = st.select_slider(

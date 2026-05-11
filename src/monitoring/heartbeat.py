@@ -1,5 +1,5 @@
 """
-Heartbeat sender — corre dentro de main_pipeline.py en un hilo separado.
+src/monitoring/heartbeat.py — corre dentro de main.py en un hilo separado.
 
 Escribe un pulso a HANA cada HEARTBEAT_INTERVAL segundos con:
   - Timestamp exacto del envío
@@ -21,11 +21,9 @@ from config import HANA_HOST, HANA_PORT, HANA_USER, HANA_PASS, HANA_SCHEMA
 
 logger = logging.getLogger("HEARTBEAT")
 
-HEARTBEAT_INTERVAL = 60     # segundos entre pulsos
-PIPELINE_ID        = "main_pipeline"   # identificador fijo — 1 fila en la tabla
+HEARTBEAT_INTERVAL = 60
+PIPELINE_ID        = "main_pipeline"
 
-
-# ── Crear tabla si no existe ──────────────────────────────────────────────────
 
 def _ensure_table(conn):
     cursor = conn.cursor()
@@ -51,8 +49,6 @@ def _ensure_table(conn):
     finally:
         cursor.close()
 
-
-# ── Enviar un pulso ───────────────────────────────────────────────────────────
 
 def _send_pulse(cycle: int, last_window: str, status: str, start_time: float):
     try:
@@ -81,8 +77,6 @@ def _send_pulse(cycle: int, last_window: str, status: str, start_time: float):
     except Exception as e:
         logger.warning(f"Fallo al enviar pulso: {e}")
 
-
-# ── Hilo de heartbeat ─────────────────────────────────────────────────────────
 
 class HeartbeatThread(threading.Thread):
     """

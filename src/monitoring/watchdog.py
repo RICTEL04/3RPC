@@ -1,11 +1,11 @@
 """
-Watchdog 3RPC — corre en servidor físico 24/7.
+src/monitoring/watchdog.py — corre en servidor físico 24/7.
 
 Monitorea la tabla PIPELINE_HEARTBEAT en HANA cada CHECK_INTERVAL segundos.
 
 Lógica de decisión:
   1. No puede conectar a HANA
-       → llama a restart_hana() con la lógica Service Manager que ya funciona
+       → llama a restart_hana() con la lógica Service Manager
        → espera y reintenta hasta que HANA responda
 
   2. Conecta a HANA pero el último pulso tiene más de HEARTBEAT_TIMEOUT segundos
@@ -15,7 +15,7 @@ Lógica de decisión:
        → Todo OK — continuar monitoreando
 
 Uso:
-  python hana_watchdog.py
+  python -m src.monitoring.watchdog
 """
 
 import base64
@@ -40,16 +40,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("WATCHDOG")
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIG
-# ══════════════════════════════════════════════════════════════════════════════
-
-CHECK_INTERVAL    = 60    # segundos entre verificaciones
-HEARTBEAT_TIMEOUT = 180   # segundos sin pulso → pipeline caído
-CF_RECOVERY_WAIT  = 120   # espera tras reiniciar CF
+CHECK_INTERVAL    = 60
+HEARTBEAT_TIMEOUT = 180
+CF_RECOVERY_WAIT  = 120
 MAX_RESTART_RETRIES = 3
 
-# CF CLI — para reiniciar el pipeline
 CF_API      = os.getenv("CF_API",      "")
 CF_USER     = os.getenv("CF_USER",     "")
 CF_PASS     = os.getenv("CF_PASS",     "")
@@ -57,17 +52,12 @@ CF_ORG      = os.getenv("CF_ORG",      "")
 CF_SPACE    = os.getenv("CF_SPACE",    "")
 CF_APP_NAME = os.getenv("CF_APP_NAME", "3RPC")
 
-# Service Manager — para start/stop de HANA Cloud
-UAA_URL       = os.getenv("UAA_URL",        "https://c36a9ecetrial.authentication.us10.hana.ondemand.com")
-SM_URL        = os.getenv("SM_URL",         "https://service-manager.cfapps.us10.hana.ondemand.com")
-SM_CLIENT_ID  = os.getenv("SM_CLIENT_ID",   "")
+UAA_URL          = os.getenv("UAA_URL",          "")
+SM_URL           = os.getenv("SM_URL",           "")
+SM_CLIENT_ID     = os.getenv("SM_CLIENT_ID",     "")
 SM_CLIENT_SECRET = os.getenv("SM_CLIENT_SECRET", "")
 HANA_INSTANCE_ID = os.getenv("HANA_INSTANCE_ID", "")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# HANA CLOUD — START/STOP via Service Manager (lógica probada)
-# ══════════════════════════════════════════════════════════════════════════════
 
 def _get_sm_token(retries: int = 3) -> str | None:
     for attempt in range(retries):
@@ -150,10 +140,7 @@ def _send_hana_start(token: str, retries: int = 3) -> int | None:
 
 
 def restart_hana() -> bool:
-    """
-    Enciende HANA Cloud via Service Manager.
-    Reintenta el start cada 5 minutos hasta confirmar que está Running.
-    """
+    """Enciende HANA Cloud via Service Manager."""
     if not all([SM_CLIENT_ID, SM_CLIENT_SECRET, HANA_INSTANCE_ID]):
         logger.error("SM_CLIENT_ID / SM_CLIENT_SECRET / HANA_INSTANCE_ID no configurados en .env")
         return False
@@ -175,7 +162,6 @@ def restart_hana() -> bool:
         elif code is None:       logger.warning("Request falló completamente")
         else:                    logger.warning(f"Respuesta inesperada: {code}")
 
-        # Verificar cada minuto durante 5 minutos
         logger.info("Verificando estado cada minuto durante 5 minutos...")
         for minute in range(1, 6):
             time.sleep(60)
@@ -193,10 +179,6 @@ def restart_hana() -> bool:
         logger.warning("HANA aún no responde después de 5 min — enviando otro start...")
         cycle += 1
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# CLOUD FOUNDRY — reiniciar pipeline
-# ══════════════════════════════════════════════════════════════════════════════
 
 def _cf_login() -> bool:
     try:
@@ -219,7 +201,6 @@ def _cf_login() -> bool:
 
 
 def _get_cf_app_state() -> str:
-    """Retorna el estado actual de la app CF: STARTED, STOPPED, CRASHED, unknown."""
     try:
         result = subprocess.run(
             ["cf", "app", CF_APP_NAME],
@@ -238,10 +219,6 @@ def _get_cf_app_state() -> str:
 
 
 def restart_cf_pipeline() -> bool:
-    """
-    Reinicia la app de Cloud Foundry y verifica que quede STARTED.
-    Reintenta cada 5 minutos si no levanta, igual que el restart de HANA.
-    """
     if not all([CF_API, CF_USER, CF_PASS, CF_ORG, CF_SPACE]):
         logger.error("Credenciales CF incompletas en .env — no se puede reiniciar el pipeline")
         return False
@@ -268,7 +245,6 @@ def restart_cf_pipeline() -> bool:
         except Exception as e:
             logger.error(f"Error ejecutando cf restart: {e}")
 
-        # Verificar estado cada minuto durante 5 minutos
         logger.info("Verificando estado de la app cada minuto durante 5 minutos...")
         for minute in range(1, 6):
             time.sleep(60)
@@ -285,10 +261,6 @@ def restart_cf_pipeline() -> bool:
         logger.warning("App aún no está STARTED después de 5 min — reintentando...")
         cycle += 1
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# MONITOREO DE HEARTBEAT
-# ══════════════════════════════════════════════════════════════════════════════
 
 def _check_hana_and_heartbeat() -> tuple[bool, dict | None]:
     try:
@@ -333,10 +305,6 @@ def _seconds_since(sent_at) -> float:
     return (datetime.now(timezone.utc) - sent_at).total_seconds()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# LOOP PRINCIPAL
-# ══════════════════════════════════════════════════════════════════════════════
-
 def run_watchdog():
     logger.info("=" * 62)
     logger.info("  3RPC WATCHDOG  —  monitoreo continuo activo")
@@ -349,7 +317,6 @@ def run_watchdog():
     while True:
         hana_ok, hb = _check_hana_and_heartbeat()
 
-        # ── HANA caída ────────────────────────────────────────────────────────
         if not hana_ok:
             hana_restarts += 1
             logger.critical(f"HANA NO RESPONDE — iniciando recovery #{hana_restarts}")
@@ -359,18 +326,15 @@ def run_watchdog():
                     f"verifica manualmente en BTP Cockpit"
                 )
             restart_hana()
-            # restart_hana() ya espera internamente hasta confirmar que HANA está up
             continue
 
         hana_restarts = 0
 
-        # ── HANA OK pero pipeline nunca arrancó ───────────────────────────────
         if hb is None:
             logger.warning("HANA OK — sin heartbeat registrado aún (pipeline no ha arrancado)")
             time.sleep(CHECK_INTERVAL)
             continue
 
-        # ── Verificar frescura del pulso ──────────────────────────────────────
         lag = _seconds_since(hb["sent_at"])
         logger.info(
             f"Heartbeat OK — ciclo={hb['cycle']} | {hb['status']} | "

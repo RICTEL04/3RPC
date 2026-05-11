@@ -12,7 +12,6 @@ Una anomalía confirmada por AMBOS tiene mucha más confianza.
 from river.anomaly import HalfSpaceTrees
 import pandas as pd
 
-# Columnas que el modelo streaming usa (las más reactivas a cambios rápidos)
 STREAMING_FEATURES = [
     "n_sys_requests", "error_rate", "security_event_rate",
     "rate_limit_rate", "server_error_rate", "top_ip_share",
@@ -20,7 +19,6 @@ STREAMING_FEATURES = [
     "total_llm_cost", "pct_content_filter", "total_requests",
 ]
 
-# Score >= este umbral → anomalía según HST (escala 0-1, 1 = más anómalo)
 HST_THRESHOLD = 0.7
 
 
@@ -32,7 +30,6 @@ class StreamingDetector:
 
     def __init__(self, n_trees: int = 25, height: int = 8,
                  window_size: int = 50):
-        # window_size: cuántos buckets recientes considera "presente"
         self.model = HalfSpaceTrees(
             n_trees=n_trees,
             height=height,
@@ -51,7 +48,6 @@ class StreamingDetector:
     def learn_and_score(self, features_df: pd.DataFrame) -> pd.Series:
         """
         Para cada bucket: primero puntúa (score), luego aprende (learn_one).
-        Así el score refleja cuánto se desvía del pasado reciente.
         El orden importa: score antes de learn evita que el modelo "normalice"
         lo que acaba de ver antes de evaluarlo.
         """
@@ -61,10 +57,8 @@ class StreamingDetector:
             if not x:
                 scores[bucket] = 0.0
                 continue
-            # Primero puntúa con lo aprendido hasta ahora
             score = self.model.score_one(x)
             scores[bucket] = score
-            # Luego aprende de este bucket
             self.model.learn_one(x)
             self.n_learned += 1
 

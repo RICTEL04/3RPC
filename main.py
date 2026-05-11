@@ -1,5 +1,5 @@
 """
-Pipeline unificado 3RPC: ETL + ML en un solo proceso.
+3RPC Main Pipeline: ETL + ML en un solo proceso.
 
 Flujo garantizado por ciclo:
   1. Poll /info hasta detectar ventana nueva en la API
@@ -23,18 +23,18 @@ import pandas as pd
 from hdbcli import dbapi
 
 from config import HANA_HOST, HANA_PORT, HANA_USER, HANA_PASS, HANA_SCHEMA
-from ingestion import fetch_all_logs, get_window_info
-from preprocessing import build_dataframe, split_by_type, flag_security_events
-from hana_client import (
+from src.ingestion.api_client import fetch_all_logs, get_window_info
+from src.processing.preprocessing import build_dataframe, split_by_type, flag_security_events
+from src.ingestion.hana_client import (
     get_connection, create_tables_if_not_exist,
     load_system_logs, load_llm_logs,
 )
-from ml.features import build_features, BUCKET, TRAINING_HOURS
-from ml.detector import AnomalyDetector
-from ml.streaming_detector import StreamingDetector
-from ml.versioning import save_model, load_latest_model
-from ml.alert_sender import send_alerts_batch
-from heartbeat import HeartbeatThread
+from src.ml.features import build_features, BUCKET, TRAINING_HOURS
+from src.ml.detector import AnomalyDetector
+from src.ml.streaming_detector import StreamingDetector
+from src.ml.versioning import save_model, load_latest_model
+from src.ml.alert_sender import send_alerts_batch
+from src.monitoring.heartbeat import HeartbeatThread
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -46,11 +46,11 @@ logger = logging.getLogger("MAIN_PIPELINE")
 # ── Configuración ETL ─────────────────────────────────────────────────────────
 EXPORT_DIR   = "exports"
 PENDING_FILE = os.path.join(EXPORT_DIR, "pending_queue.json")
-POLL_BACKOFF = [5, 10, 30, 60]   # segundos entre reintentos de /info
+POLL_BACKOFF = [5, 10, 30, 60]
 
 # ── Configuración ML ──────────────────────────────────────────────────────────
-SCORE_HOURS        = TRAINING_HOURS   # evaluar la misma ventana de entrenamiento
-RETRAIN_EVERY      = 2                # re-entrenar IForest cada N ciclos completados
+SCORE_HOURS        = TRAINING_HOURS
+RETRAIN_EVERY      = 2
 MIN_TRAINING_HOURS = int(os.getenv("MIN_TRAINING_HOURS", 24))
 
 # ── Estado global de sesión ───────────────────────────────────────────────────
@@ -72,10 +72,6 @@ def _save_ml_state(cycle: int, last_scored_until: str):
 
 
 def _load_ml_state() -> tuple[int, str | None]:
-    """
-    Carga el estado persistido del ML.
-    Retorna (cycle, last_scored_until) o (0, None) si no existe.
-    """
     if not os.path.exists(ML_STATE_FILE):
         return 0, None
     try:
@@ -114,7 +110,7 @@ def _load_hst() -> StreamingDetector:
 
 
 def _save_hst(hst: StreamingDetector):
-    """Persiste el estado actual del HST a disco (sobreescribe — solo 1 archivo)."""
+    """Persiste el estado actual del HST a disco."""
     import pickle
     os.makedirs("models", exist_ok=True)
     with open(HST_STATE_FILE, "wb") as f:
@@ -133,18 +129,11 @@ _cycle, _last_scored_until = _load_ml_state()
 # UTILIDADES COMUNES
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Segundos de espera entre reintentos de conexión a HANA
-HANA_RETRY_BACKOFF  = [15, 30, 60, 120]
-# Segundos a esperar después de mandar a encender HANA antes de reintentar
-HANA_BOOT_WAIT      = 180
+HANA_RETRY_BACKOFF = [15, 30, 60, 120]
+HANA_BOOT_WAIT     = 180
 
 
 def _trigger_hana_start():
-    """
-    El reinicio de HANA es responsabilidad del watchdog.py en el servidor físico.
-    El pipeline solo registra el evento y confía en el retry loop para reconectar
-    cuando HANA vuelva a estar disponible.
-    """
     logger.warning(
         "HANA no disponible — el watchdog externo debe encenderla. "
         "El pipeline seguirá reintentando la conexión automáticamente."
@@ -161,11 +150,7 @@ def _get_conn():
 
 
 def _get_conn_with_retry() -> dbapi.Connection:
-    """
-    Intenta conectar a HANA con backoff.
-    Si falla repetidamente, manda a encender HANA y sigue esperando.
-    Nunca lanza excepción — el proceso no muere por falta de conexión.
-    """
+    """Intenta conectar a HANA con backoff. Nunca lanza excepción."""
     delays        = iter(HANA_RETRY_BACKOFF)
     next_delay    = HANA_RETRY_BACKOFF[-1]
     hana_started  = False
@@ -189,7 +174,6 @@ def _get_conn_with_retry() -> dbapi.Connection:
                 f"— reintentando en {next_delay}s"
             )
 
-            # Al tercer intento fallido, mandar a encender HANA una sola vez
             if attempt == 3 and not hana_started:
                 _trigger_hana_start()
                 hana_started = True
@@ -201,10 +185,7 @@ def _get_conn_with_retry() -> dbapi.Connection:
 
 
 def _append_csv(file_path: str, new_df: pd.DataFrame) -> int:
-    """
-    Append incremental a CSV local deduplicando por _id.
-    Retorna el número de registros realmente nuevos añadidos.
-    """
+    """Append incremental a CSV local deduplicando por _id."""
     os.makedirs(EXPORT_DIR, exist_ok=True)
     if os.path.exists(file_path):
         existing = pd.read_csv(file_path, encoding="utf-8", low_memory=False)
@@ -296,15 +277,11 @@ def _drain_pending_queue(conn):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# RECOVERY AL ARRANQUE — resubir CSVs locales si HANA estuvo caída
+# RECOVERY AL ARRANQUE
 # ══════════════════════════════════════════════════════════════════════════════
 
 def startup_recovery(conn):
-    """
-    Al arrancar, re-sube los CSVs locales a HANA via UPSERT.
-    Idempotente: no crea duplicados gracias a UPSERT WITH PRIMARY KEY.
-    Recupera cualquier dato perdido durante caídas previas.
-    """
+    """Re-sube los CSVs locales a HANA via UPSERT. Idempotente."""
     csv_system = os.path.join(EXPORT_DIR, "LOGS_SYSTEM.csv")
     csv_llm    = os.path.join(EXPORT_DIR, "LOGS_LLM.csv")
 
@@ -336,11 +313,7 @@ def startup_recovery(conn):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _sleep_until_next_slot():
-    """
-    Duerme hasta el próximo :00 o :30 exacto.
-    Se llama tras un ciclo exitoso para no consultar la API antes de que
-    la ventana pueda haber cambiado.
-    """
+    """Duerme hasta el próximo :00 o :30 exacto."""
     now = datetime.now()
     if now.minute < 30:
         target = now.replace(minute=30, second=0, microsecond=0)
@@ -356,10 +329,7 @@ def _sleep_until_next_slot():
 
 
 def _wait_for_new_window(last_window_start: str | None) -> dict:
-    """
-    Consulta /info con backoff hasta detectar que window_start cambió.
-    Retorna el nuevo dict de info cuando hay ventana nueva.
-    """
+    """Consulta /info con backoff hasta detectar que window_start cambió."""
     delays    = iter(POLL_BACKOFF)
     cur_delay = POLL_BACKOFF[-1]
 
@@ -400,10 +370,8 @@ def run_etl(conn) -> tuple[pd.DataFrame, pd.DataFrame]:
     logger.info("FASE 1/2 — ETL")
     logger.info("─" * 62)
 
-    # 1. Extract
     records, window_info = fetch_all_logs()
 
-    # 2. Transform
     df          = build_dataframe(records)
     df_system, df_llm = split_by_type(df)
     df_system   = flag_security_events(df_system)
@@ -415,14 +383,12 @@ def run_etl(conn) -> tuple[pd.DataFrame, pd.DataFrame]:
         f"Transformación: {len(df_system):,} sistema | {len(df_llm):,} LLM"
     )
 
-    # 3. CSV local (buffer permanente ante caídas)
     new_total  = _append_csv(os.path.join(EXPORT_DIR, "LOGS_EXPORT.csv"),  df)
     new_system = _append_csv(os.path.join(EXPORT_DIR, "LOGS_SYSTEM.csv"),  df_system)
     new_llm    = _append_csv(os.path.join(EXPORT_DIR, "LOGS_LLM.csv"),     df_llm)
     new_records = new_system + new_llm
     logger.info(f"CSVs locales — registros nuevos: {new_system} sistema | {new_llm} LLM")
 
-    # 4. HANA upload
     try:
         create_tables_if_not_exist(conn)
         _drain_pending_queue(conn)
@@ -474,7 +440,6 @@ def _create_anomaly_table(conn):
     finally:
         cursor.close()
 
-    # Migraciones incrementales
     for col_ddl in ['"reason" NVARCHAR(500)', '"attack_category" NVARCHAR(100)']:
         cursor = conn.cursor()
         try:
@@ -587,10 +552,6 @@ def _log_anomaly(a: pd.Series, features_df: pd.DataFrame):
 
 def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
            last_scored_until: str | None = None):
-    """
-    Scoring e IForest + HST usando datos frescos recién ingestados.
-    df_sys_fresh / df_llm_fresh vienen directamente del ETL del mismo ciclo.
-    """
     global _cycle, _last_scored_until
     _cycle += 1
     logger.info("─" * 62)
@@ -599,7 +560,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
 
     _create_anomaly_table(conn)
 
-    # ── Verificar que hay suficientes datos históricos en HANA ────────────────
     try:
         cursor = conn.cursor()
         cursor.execute(f"""
@@ -633,7 +593,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
         logger.error(f"Error verificando datos en HANA: {e}")
         return
 
-    # Cargar ventana de entrenamiento completa desde HANA
     since = (
         datetime.now(timezone.utc) - timedelta(hours=TRAINING_HOURS)
     ).strftime("%Y-%m-%d %H:%M:%S")
@@ -665,7 +624,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
         logger.warning("Sin datos en HANA — saltando ML")
         return
 
-    # Rango real de datos de entrenamiento
     all_train_ts = pd.concat([
         df_sys_train["timestamp"].dropna(),
         df_llm_train["timestamp"].dropna(),
@@ -681,16 +639,13 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
         f"({train_span:.1f}h)"
     )
 
-    # Normalizar timestamps en datos frescos del ETL
     for df in (df_sys_fresh, df_llm_fresh):
         if "timestamp" in df.columns:
             df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
 
-    # ── Catchup: si el modelo estuvo inactivo, cargar datos perdidos ──────────
     if last_scored_until:
         try:
             last_ts = pd.to_datetime(last_scored_until, utc=True)
-            # Timestamps máximos en los datos frescos
             fresh_ts = pd.concat([
                 df_sys_fresh["timestamp"].dropna() if "timestamp" in df_sys_fresh.columns else pd.Series(dtype="datetime64[ns, UTC]"),
                 df_llm_fresh["timestamp"].dropna() if "timestamp" in df_llm_fresh.columns else pd.Series(dtype="datetime64[ns, UTC]"),
@@ -698,7 +653,7 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
             if not fresh_ts.empty:
                 fresh_min = fresh_ts.min()
                 gap_hours = (fresh_min - last_ts).total_seconds() / 3600
-                if gap_hours > 0.6:  # más de 36 min sin evaluar → hay datos perdidos
+                if gap_hours > 0.6:
                     logger.info(
                         f"Catchup detectado: gap de {gap_hours:.1f}h sin scoring "
                         f"({last_ts.strftime('%H:%M')} → {fresh_min.strftime('%H:%M')} UTC) "
@@ -725,7 +680,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
                         df.columns = [c.lower() for c in df.columns]
                         if "timestamp" in df.columns:
                             df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True, errors="coerce")
-                    # Reemplazar datos frescos con el rango completo de catchup
                     df_sys_fresh = df_sys_catchup
                     df_llm_fresh = df_llm_catchup
                     logger.info(
@@ -735,7 +689,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
         except Exception as e:
             logger.warning(f"Catchup fallido, usando solo datos frescos: {e}")
 
-    # Rango real de datos de scoring (ventana fresca del ETL)
     all_score_ts = pd.concat([
         df_sys_fresh["timestamp"].dropna() if "timestamp" in df_sys_fresh.columns else pd.Series(dtype="datetime64[ns, UTC]"),
         df_llm_fresh["timestamp"].dropna() if "timestamp" in df_llm_fresh.columns else pd.Series(dtype="datetime64[ns, UTC]"),
@@ -751,7 +704,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
             f"({score_span:.0f} min)"
         )
 
-    # Feature engineering
     features_train = build_features(df_sys_train,  df_llm_train)
     features_score = build_features(df_sys_fresh,   df_llm_fresh)
 
@@ -765,7 +717,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
         f"| dim: {features_train.shape[1]} variables"
     )
 
-    # Entrenar o reutilizar IForest
     detector, meta = load_latest_model()
     should_train   = detector is None or (_cycle % RETRAIN_EVERY == 1)
 
@@ -793,12 +744,10 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
         logger.info("Sin datos frescos para evaluar")
         return
 
-    # IForest scoring
     scores = detector.score(features_score)
     preds  = detector.predict(features_score)
     iforest_anomalies = set(features_score.index[preds == -1].tolist())
 
-    # HST scoring
     hst_scores    = _streaming.learn_and_score(features_score)
     hst_flags     = _streaming.flag_anomalies(hst_scores)
     hst_anomalies = set(features_score.index[hst_flags].tolist())
@@ -838,7 +787,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
 
         _save_anomalies(conn, anomalies_df, features_score, df_sys_fresh, df_llm_fresh)
 
-        # Enviar alertas a la API SAP — aislado para no interrumpir el modelo
         try:
             for col_feat, col_out in [
                 ("n_sys_requests", "n_requests"),
@@ -853,7 +801,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
         except Exception as alert_exc:
             logger.error(f"Error enviando alertas a la API (el modelo sigue OK): {alert_exc}")
 
-    # Persistir HST y estado ML siempre que se haga scoring (con o sin anomalías)
     _save_hst(_streaming)
     _last_scored_until = str(features_score.index.max())
     _save_ml_state(_cycle, _last_scored_until)
@@ -865,10 +812,6 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_cycle(conn, window_info: dict) -> int:
-    """
-    Ejecuta un ciclo completo ETL → ML.
-    Retorna el número de registros nuevos añadidos a los CSVs.
-    """
     logger.info("=" * 62)
     logger.info(
         f"CICLO #{_cycle + 1}  —  {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC"
@@ -892,25 +835,20 @@ if __name__ == "__main__":
     logger.info("  3RPC MAIN PIPELINE  —  iniciando")
     logger.info("=" * 62)
 
-    # Heartbeat daemon — manda pulso a HANA cada 60 s
     hb = HeartbeatThread()
     hb.start()
 
     last_window = None
 
-    # Loop externo: si hay un error inesperado, reconecta y continúa
     while True:
         conn = None
         try:
-            # Conexión con retry automático + arranque de HANA si está caída
             logger.info("Conectando a HANA...")
             conn = _get_conn_with_retry()
 
             create_tables_if_not_exist(conn)
-            #startup_recovery(conn)
 
-            # Ventana inicial solo en el primer arranque
-            empty_cycles = 0   # ciclos consecutivos sin datos nuevos
+            empty_cycles = 0
 
             if last_window is None:
                 try:
@@ -925,7 +863,6 @@ if __name__ == "__main__":
                     logger.error(f"Error en primer ciclo: {e}")
                     hb.set_error()
 
-            # Loop principal
             while True:
                 _sleep_until_next_slot()
                 new_info    = _wait_for_new_window(last_window)
@@ -934,7 +871,6 @@ if __name__ == "__main__":
                 new_records = run_cycle(conn, new_info)
                 hb.set_state(_cycle, last_window, "RUNNING")
 
-                # Gestión de CSVs — eliminar si 2 ciclos consecutivos sin datos nuevos
                 if new_records == 0:
                     empty_cycles += 1
                     logger.info(
@@ -955,7 +891,6 @@ if __name__ == "__main__":
             )
             hb.set_error()
             time.sleep(30)
-            # El loop externo vuelve a intentar _get_conn_with_retry()
         finally:
             if conn:
                 try:

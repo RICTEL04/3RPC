@@ -8,10 +8,10 @@ import pandas as pd
 from hdbcli import dbapi
 
 from config import HANA_HOST, HANA_PORT, HANA_USER, HANA_PASS, HANA_SCHEMA
-from ml.features import build_features, BUCKET, TRAINING_HOURS, clean_system, clean_llm
-from ml.detector import AnomalyDetector
-from ml.streaming_detector import StreamingDetector
-from ml.versioning import save_model, load_latest_model
+from src.ml.features import build_features, BUCKET, TRAINING_HOURS, clean_system, clean_llm
+from src.ml.detector import AnomalyDetector
+from src.ml.streaming_detector import StreamingDetector
+from src.ml.versioning import save_model, load_latest_model
 
 logging.basicConfig(
     level=logging.INFO,

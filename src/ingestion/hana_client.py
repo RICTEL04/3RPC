@@ -68,7 +68,6 @@ LLM_DDL = f"""
     )
 """
 
-# Columnas a migrar en tablas existentes: (nombre, tipo HANA)
 SYSTEM_MIGRATE = [
     ("port_service",               "NVARCHAR(200)"),
     ("event_description",          "NVARCHAR(500)"),
@@ -133,7 +132,6 @@ def _drop_column_if_exists(cursor, table_name: str, col_name: str):
     try:
         cursor.execute(f'ALTER TABLE "{HANA_SCHEMA}"."{table_name}" DROP ("{col_name}")')
     except Exception as e:
-        # Columna ya no existe — ignorar
         if getattr(e, 'errorcode', None) == 260 or "invalid column name" in str(e).lower():
             pass
         else:
@@ -163,7 +161,6 @@ def create_tables_if_not_exist(conn):
     for col, dtype in LLM_MIGRATE:
         _add_column_if_missing(cursor, "LLM_LOGS", col, dtype)
 
-    # Eliminar columna descartada de LLM_LOGS
     _drop_column_if_exists(cursor, "LLM_LOGS", "http_status_code")
 
     conn.commit()
