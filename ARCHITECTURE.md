@@ -25,6 +25,8 @@
 
 **3RPC** es un pipeline de ingesta, procesamiento y detección de anomalías para logs de una plataforma SAP. El sistema recolecta logs desde una API REST cada 30 minutos, los almacena en SAP HANA Cloud y aplica dos modelos de Machine Learning en paralelo para detectar comportamientos anómalos en tiempo cuasi-real.
 
+<img width="1920" height="1080" alt="Arquitectura 3rpc" src="https://github.com/user-attachments/assets/95c37a93-3f79-4157-a5f2-47c03a86b744" />
+
 ### Capacidades principales
 
 | Capacidad | Descripción |
