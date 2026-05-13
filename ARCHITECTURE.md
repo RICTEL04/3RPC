@@ -646,5 +646,3 @@ Datos reales de HANA tras 19 días en producción:
 | `joblib` | 1.4.2 | Serialización de modelos sklearn |
 
 ---
-
-*Generado a partir del código fuente del proyecto.*
