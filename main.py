@@ -797,7 +797,7 @@ def run_ml(conn, df_sys_fresh: pd.DataFrame, df_llm_fresh: pd.DataFrame,
                     anomalies_df[col_out] = (
                         anomalies_df["bucket"].map(features_score[col_feat]).fillna(0)
                     )
-            send_alerts_batch(anomalies_df)
+            send_alerts_batch(anomalies_df, conn=conn)
         except Exception as alert_exc:
             logger.error(f"Error enviando alertas a la API (el modelo sigue OK): {alert_exc}")
 
