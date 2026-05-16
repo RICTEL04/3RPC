@@ -253,11 +253,6 @@ def send_alert(anomaly: dict) -> dict:
 # se guardan en HANA pero NO se envían como alerta.
 _SECURITY_ALERT_CATEGORIES: frozenset[str] = frozenset({
     "Escalada de Eventos de Seguridad",
-    "DDoS / Flooding de Trafico",
-    "Fuerza Bruta",
-    "Inyeccion de Prompt LLM",
-    "Reconocimiento / Escaneo",
-    "Concentracion Geografica",
 })
 
 
